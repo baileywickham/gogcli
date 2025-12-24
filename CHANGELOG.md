@@ -1,12 +1,13 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
-
-## 0.1.2 - Unreleased
+## 0.2.0 - Unreleased
 
 ### Added
 
 ### Changed
+
+- Build: `make` builds `./bin/gog` by default (adds `build` target, PR #12 — thanks @advait).
+- Docs: local build instructions now use `make` (PR #12 — thanks @advait).
 
 ### Fixed
 
