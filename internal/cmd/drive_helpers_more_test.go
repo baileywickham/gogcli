@@ -36,6 +36,15 @@ func TestDriveExportExtension(t *testing.T) {
 	if got := driveExportExtension("text/csv"); got != ".csv" {
 		t.Fatalf("unexpected: %q", got)
 	}
+	if got := driveExportExtension("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"); got != ".xlsx" {
+		t.Fatalf("unexpected: %q", got)
+	}
+	if got := driveExportExtension("application/vnd.openxmlformats-officedocument.presentationml.presentation"); got != ".pptx" {
+		t.Fatalf("unexpected: %q", got)
+	}
+	if got := driveExportExtension("application/vnd.openxmlformats-officedocument.wordprocessingml.document"); got != ".docx" {
+		t.Fatalf("unexpected: %q", got)
+	}
 	if got := driveExportExtension("image/png"); got != ".png" {
 		t.Fatalf("unexpected: %q", got)
 	}
