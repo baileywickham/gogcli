@@ -107,6 +107,10 @@ var (
 )
 
 func TestWrapKeychainError(t *testing.T) {
+	if !IsKeychainLockedError("User Interaction is not allowed. (-25308)") {
+		t.Skip("wrapKeychainError only wraps errors on macOS")
+	}
+
 	tests := []struct {
 		name        string
 		err         error
