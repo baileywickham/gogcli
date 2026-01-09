@@ -23,7 +23,7 @@ GOLANGCI_LINT := $(TOOLS_DIR)/golangci-lint
 # Allow passing CLI args as extra "targets":
 #   make gogcli -- --help
 #   make gogcli -- gmail --help
-ifneq ($(filter gogcli,$(MAKECMDGOALS)),)
+ifneq ($(filter gogcli gog,$(MAKECMDGOALS)),)
 RUN_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
 $(eval $(RUN_ARGS):;@:)
 endif
@@ -33,7 +33,9 @@ build:
 	@go build -ldflags "$(LDFLAGS)" -o $(BIN) $(CMD)
 
 gog: build
-	@if [ -z "$(ARGS)" ]; then \
+	@if [ -n "$(RUN_ARGS)" ]; then \
+		$(BIN) $(RUN_ARGS); \
+	elif [ -z "$(ARGS)" ]; then \
 		$(BIN) --help; \
 	else \
 		$(BIN) $(ARGS); \

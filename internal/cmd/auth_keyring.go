@@ -7,26 +7,67 @@ import (
 
 	"github.com/steipete/gogcli/internal/config"
 	"github.com/steipete/gogcli/internal/outfmt"
+	"github.com/steipete/gogcli/internal/secrets"
 	"github.com/steipete/gogcli/internal/ui"
 )
 
 type AuthKeyringCmd struct {
-	Set AuthKeyringSetCmd `cmd:"" name:"set" help:"Set keyring backend (writes config.json)"`
+	Backend  string `arg:"" optional:"" name:"backend" help:"Keyring backend: auto|keychain|file"`
+	Backend2 string `arg:"" optional:"" name:"backend2" help:"(compat) Use: gog auth keyring set <backend>"`
 }
 
-type AuthKeyringSetCmd struct {
-	Backend string `arg:"" name:"backend" help:"Keyring backend: auto|keychain|file"`
-}
-
-func (c *AuthKeyringSetCmd) Run(ctx context.Context) error {
+func (c *AuthKeyringCmd) Run(ctx context.Context) error {
 	u := ui.FromContext(ctx)
 
 	backend := strings.ToLower(strings.TrimSpace(c.Backend))
-	switch backend {
-	case "default":
+	backend2 := strings.ToLower(strings.TrimSpace(c.Backend2))
+
+	// Backwards compat for earlier suggestion: `gog auth keyring set <backend>`.
+	if backend == "set" {
+		backend = backend2
+		backend2 = ""
+	}
+
+	// No args: show current config.
+	if backend == "" {
+		path, _ := config.ConfigPath()
+		info, err := secrets.ResolveKeyringBackendInfo()
+		if err != nil {
+			return err
+		}
+
+		if outfmt.IsJSON(ctx) {
+			return outfmt.WriteJSON(os.Stdout, map[string]any{
+				"keyring_backend": info.Value,
+				"source":          info.Source,
+				"path":            path,
+			})
+		}
+
+		if u == nil {
+			return nil
+		}
+		u.Out().Printf("path\t%s", path)
+		u.Out().Printf("keyring_backend\t%s", info.Value)
+		u.Out().Printf("source\t%s", info.Source)
+		u.Err().Println("Hint: gog auth keyring <auto|keychain|file>")
+		return nil
+	}
+
+	if backend2 != "" {
+		return usagef("too many args: %q %q", c.Backend, c.Backend2)
+	}
+
+	if backend == "default" {
 		backend = "auto"
-	case "auto", "keychain", "file":
-	default:
+	}
+
+	allowed := map[string]struct{}{
+		"auto":     {},
+		"keychain": {},
+		"file":     {},
+	}
+	if _, ok := allowed[backend]; !ok {
 		return usagef("invalid backend: %q (expected auto, keychain, or file)", c.Backend)
 	}
 

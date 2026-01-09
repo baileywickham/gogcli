@@ -25,6 +25,7 @@ const (
 	driveMimeGoogleSheet   = "application/vnd.google-apps.spreadsheet"
 	driveMimeGoogleSlides  = "application/vnd.google-apps.presentation"
 	driveMimeGoogleDrawing = "application/vnd.google-apps.drawing"
+	driveJSONKeyFile       = "file"
 	mimePDF                = "application/pdf"
 	mimeCSV                = "text/csv"
 	mimeDocx               = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -225,7 +226,7 @@ func (c *DriveGetCmd) Run(ctx context.Context, flags *RootFlags) error {
 	}
 
 	if outfmt.IsJSON(ctx) {
-		return outfmt.WriteJSON(os.Stdout, map[string]any{"file": f})
+		return outfmt.WriteJSON(os.Stdout, map[string]any{driveJSONKeyFile: f})
 	}
 
 	u.Out().Printf("id\t%s", f.Id)
@@ -365,7 +366,7 @@ func (c *DriveUploadCmd) Run(ctx context.Context, flags *RootFlags) error {
 	}
 
 	if outfmt.IsJSON(ctx) {
-		return outfmt.WriteJSON(os.Stdout, map[string]any{"file": created})
+		return outfmt.WriteJSON(os.Stdout, map[string]any{driveJSONKeyFile: created})
 	}
 
 	u.Out().Printf("id\t%s", created.Id)
@@ -513,7 +514,7 @@ func (c *DriveMoveCmd) Run(ctx context.Context, flags *RootFlags) error {
 	}
 
 	if outfmt.IsJSON(ctx) {
-		return outfmt.WriteJSON(os.Stdout, map[string]any{"file": updated})
+		return outfmt.WriteJSON(os.Stdout, map[string]any{driveJSONKeyFile: updated})
 	}
 
 	u.Out().Printf("id\t%s", updated.Id)
@@ -556,7 +557,7 @@ func (c *DriveRenameCmd) Run(ctx context.Context, flags *RootFlags) error {
 	}
 
 	if outfmt.IsJSON(ctx) {
-		return outfmt.WriteJSON(os.Stdout, map[string]any{"file": updated})
+		return outfmt.WriteJSON(os.Stdout, map[string]any{driveJSONKeyFile: updated})
 	}
 
 	u.Out().Printf("id\t%s", updated.Id)
@@ -818,7 +819,7 @@ func driveType(mimeType string) string {
 	if mimeType == "application/vnd.google-apps.folder" {
 		return "folder"
 	}
-	return "file"
+	return driveJSONKeyFile
 }
 
 func formatDateTime(iso string) string {

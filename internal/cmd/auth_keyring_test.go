@@ -28,7 +28,7 @@ func TestAuthKeyringSet_WritesConfig(t *testing.T) {
 	ctx := ui.WithUI(context.Background(), u)
 	ctx = outfmt.WithMode(ctx, outfmt.Mode{})
 
-	if err = runKong(t, &AuthKeyringSetCmd{}, []string{"file"}, ctx, nil); err != nil {
+	if err = runKong(t, &AuthKeyringCmd{}, []string{"file"}, ctx, nil); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -53,6 +53,33 @@ func TestAuthKeyringSet_WritesConfig(t *testing.T) {
 	}
 }
 
+func TestAuthKeyring_WritesConfig_Shorthand(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg-config"))
+	t.Setenv("GOG_KEYRING_BACKEND", "")
+
+	var stdout, stderr bytes.Buffer
+	u, err := ui.New(ui.Options{Stdout: &stdout, Stderr: &stderr, Color: "never"})
+	if err != nil {
+		t.Fatalf("ui new: %v", err)
+	}
+	ctx := ui.WithUI(context.Background(), u)
+	ctx = outfmt.WithMode(ctx, outfmt.Mode{})
+
+	if err = runKong(t, &AuthKeyringCmd{}, []string{"set", "file"}, ctx, nil); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	cfg, err := config.ReadConfig()
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if cfg.KeyringBackend != "file" {
+		t.Fatalf("expected file, got %q", cfg.KeyringBackend)
+	}
+}
+
 func TestAuthKeyringSet_InvalidBackend(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	u, err := ui.New(ui.Options{Stdout: &stdout, Stderr: &stderr, Color: "never"})
@@ -62,7 +89,7 @@ func TestAuthKeyringSet_InvalidBackend(t *testing.T) {
 	ctx := ui.WithUI(context.Background(), u)
 	ctx = outfmt.WithMode(ctx, outfmt.Mode{})
 
-	err = runKong(t, &AuthKeyringSetCmd{}, []string{"nope"}, ctx, nil)
+	err = runKong(t, &AuthKeyringCmd{}, []string{"nope"}, ctx, nil)
 	if err == nil {
 		t.Fatalf("expected error")
 	}

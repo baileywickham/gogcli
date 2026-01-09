@@ -22,12 +22,13 @@
   - `gog gmail labels create`, reply-all support, thread search date display, and thread-id replies.
   - `gog gmail get --json` includes flattened headers, `unsubscribe`, and extracted `body` (for `--format full`).
   - `gog gmail settings ...` reorg + filter operations now request the right settings scope (thanks @camerondare).
+- Keep: list/search/get notes and download attachments (Workspace only; service account via `gog auth keep ...`) — thanks @koala73.
 - Contacts: `gog contacts other delete` for removing other contacts (thanks @salmonumbrella).
 - Drive: comments subcommand.
 - Sheets: `sheets update|append --copy-validation-from ...` copies data validation (#29) — thanks @mahmoudashraf93.
 - Auth/services:
   - `docs` service support + service metadata/listing (thanks @mbelinky).
-  - `gog auth keyring set <auto|keychain|file>` writes `keyring_backend` to `config.json`.
+  - `gog auth keyring <auto|keychain|file>` writes `keyring_backend` to `config.json`.
   - `GOG_KEYRING_BACKEND={auto|keychain|file}` to force a backend (use `file` to avoid Keychain prompts; pair with `GOG_KEYRING_PASSWORD`).
 - Docs: `docs info`/`docs cat` now use the Docs API (Drive still used for exports/copy/create).
 - Build: linux_arm64 release target.
@@ -45,7 +46,7 @@
 ### Changed
 
 - CLI: help output polish (grouped by default, optional full expansion via `GOG_HELP=full`); colored headings/command names; more flag aliases like `--output`/`--output-dir` (#47) — thanks @salmonumbrella.
-- Homebrew/DX: tap installs GitHub release binaries (macOS) to reduce Keychain prompt churn; remove pnpm wrapper in favor of `make gog` targets.
+- Homebrew/DX: tap installs GitHub release binaries (macOS) to reduce Keychain prompt churn; remove pnpm wrapper in favor of `make gog` targets; `make gog <args>` works without `ARGS=`.
 - Auth: `gog auth add` now defaults to `--services user` (`--services all` remains accepted for backwards compatibility).
 
 ## 0.4.2 - 2025-12-31
