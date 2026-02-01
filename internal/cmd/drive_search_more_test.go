@@ -17,6 +17,20 @@ import (
 	"github.com/steipete/gogcli/internal/ui"
 )
 
+func driveAllDrivesQueryError(r *http.Request) string {
+	q := r.URL.Query()
+	if q.Get("corpora") != "allDrives" {
+		return "missing corpora=allDrives"
+	}
+	if q.Get("supportsAllDrives") != "true" {
+		return "missing supportsAllDrives=true"
+	}
+	if q.Get("includeItemsFromAllDrives") != "true" {
+		return "missing includeItemsFromAllDrives=true"
+	}
+	return ""
+}
+
 func TestDriveSearchCmd_TextAndJSON(t *testing.T) {
 	origNew := newDriveService
 	t.Cleanup(func() { newDriveService = origNew })
@@ -99,11 +113,11 @@ func TestDriveSearchCmd_NoResultsAndEmptyQuery(t *testing.T) {
 	origNew := newDriveService
 	t.Cleanup(func() { newDriveService = origNew })
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.NotFound(w, r)
-			return
-		}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				http.NotFound(w, r)
+				return
+			}
 		if errMsg := driveAllDrivesQueryError(r, true); errMsg != "" {
 			http.Error(w, errMsg, http.StatusBadRequest)
 			return
