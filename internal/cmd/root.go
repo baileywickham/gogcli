@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/alecthomas/kong"
@@ -24,7 +23,8 @@ import (
 const (
 	colorAuto  = "auto"
 	colorNever = "never"
-	strTrue    = "true"
+	boolTrue   = "true"
+	boolFalse  = "false"
 )
 
 type RootFlags struct {
@@ -282,7 +282,7 @@ func envOr(key, fallback string) string {
 func envBool(key string) bool {
 	v := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
 	switch v {
-	case "1", strTrue, "yes", "y", "on":
+	case "1", boolTrue, "yes", "y", "on":
 		return true
 	default:
 		return false
@@ -290,13 +290,11 @@ func envBool(key string) bool {
 }
 
 func boolString(v bool) string {
-	return strconv.FormatBool(v)
+	if v {
+		return boolTrue
+	}
+	return boolFalse
 }
-
-func newParser(description string) (*kong.Kong, *CLI, error) {
-	envMode := outfmt.FromEnv()
-	vars := kong.Vars{
-		"auth_services":    googleauth.UserServiceCSV(),
 		"color":            envOr("GOG_COLOR", "auto"),
 		"calendar_weekday": envOr("GOG_CALENDAR_WEEKDAY", "false"),
 		"client":           envOr("GOG_CLIENT", ""),
