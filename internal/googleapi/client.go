@@ -25,9 +25,31 @@ const defaultHTTPTimeout = 30 * time.Second
 var (
 	readClientCredentials = config.ReadClientCredentialsFor
 	openSecretsStore      = secrets.OpenDefault
+	readConfigForClient   = config.ReadConfig
 )
 
 func tokenSourceForAccount(ctx context.Context, service googleauth.Service, email string) (oauth2.TokenSource, error) {
+	scopes, err := googleauth.Scopes(service)
+	if err != nil {
+		return nil, fmt.Errorf("resolve scopes: %w", err)
+	}
+
+	cfg, err := readConfigForClient()
+	if err != nil {
+		return nil, fmt.Errorf("read config: %w", err)
+	}
+
+	if cfg.TokenEndpoint != "" {
+		slog.Debug("using remote token endpoint", "email", email, "endpoint", cfg.TokenEndpoint)
+
+		return &remoteTokenSource{
+			endpoint: cfg.TokenEndpoint,
+			auth:     cfg.TokenEndpointAuth,
+			email:    email,
+			scopes:   scopes,
+		}, nil
+	}
+
 	client, err := authclient.ResolveClient(ctx, email)
 	if err != nil {
 		return nil, fmt.Errorf("resolve client: %w", err)
@@ -38,15 +60,7 @@ func tokenSourceForAccount(ctx context.Context, service googleauth.Service, emai
 		return nil, fmt.Errorf("read credentials: %w", err)
 	}
 
-	var requiredScopes []string
-
-	if scopes, err := googleauth.Scopes(service); err != nil {
-		return nil, fmt.Errorf("resolve scopes: %w", err)
-	} else {
-		requiredScopes = scopes
-	}
-
-	return tokenSourceForAccountScopes(ctx, string(service), email, client, creds.ClientID, creds.ClientSecret, requiredScopes)
+	return tokenSourceForAccountScopes(ctx, string(service), email, client, creds.ClientID, creds.ClientSecret, scopes)
 }
 
 func tokenSourceForAccountScopes(ctx context.Context, serviceLabel string, email string, client string, clientID string, clientSecret string, requiredScopes []string) (oauth2.TokenSource, error) {
@@ -95,11 +109,23 @@ func optionsForAccount(ctx context.Context, service googleauth.Service, email st
 func optionsForAccountScopes(ctx context.Context, serviceLabel string, email string, scopes []string) ([]option.ClientOption, error) {
 	slog.Debug("creating client options with custom scopes", "serviceLabel", serviceLabel, "email", email)
 
-	var creds config.ClientCredentials
-
 	var ts oauth2.TokenSource
 
-	if serviceAccountTS, saPath, ok, err := tokenSourceForServiceAccountScopes(ctx, email, scopes); err != nil {
+	cfg, err := readConfigForClient()
+	if err != nil {
+		return nil, fmt.Errorf("read config: %w", err)
+	}
+
+	if cfg.TokenEndpoint != "" {
+		slog.Debug("using remote token endpoint", "email", email, "endpoint", cfg.TokenEndpoint)
+
+		ts = &remoteTokenSource{
+			endpoint: cfg.TokenEndpoint,
+			auth:     cfg.TokenEndpointAuth,
+			email:    email,
+			scopes:   scopes,
+		}
+	} else if serviceAccountTS, saPath, ok, err := tokenSourceForServiceAccountScopes(ctx, email, scopes); err != nil {
 		return nil, fmt.Errorf("service account token source: %w", err)
 	} else if ok {
 		slog.Debug("using service account credentials", "email", email, "path", saPath)
@@ -109,6 +135,8 @@ func optionsForAccountScopes(ctx context.Context, serviceLabel string, email str
 		if err != nil {
 			return nil, fmt.Errorf("resolve client: %w", err)
 		}
+
+		var creds config.ClientCredentials
 
 		if c, err := readClientCredentials(client); err != nil {
 			return nil, fmt.Errorf("read credentials: %w", err)

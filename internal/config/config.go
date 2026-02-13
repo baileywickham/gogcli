@@ -10,11 +10,13 @@ import (
 )
 
 type File struct {
-	KeyringBackend  string            `json:"keyring_backend,omitempty"`
-	DefaultTimezone string            `json:"default_timezone,omitempty"`
-	AccountAliases  map[string]string `json:"account_aliases,omitempty"`
-	AccountClients  map[string]string `json:"account_clients,omitempty"`
-	ClientDomains   map[string]string `json:"client_domains,omitempty"`
+	KeyringBackend    string            `json:"keyring_backend,omitempty"`
+	DefaultTimezone   string            `json:"default_timezone,omitempty"`
+	AccountAliases    map[string]string `json:"account_aliases,omitempty"`
+	AccountClients    map[string]string `json:"account_clients,omitempty"`
+	ClientDomains     map[string]string `json:"client_domains,omitempty"`
+	TokenEndpoint     string            `json:"token_endpoint,omitempty"`
+	TokenEndpointAuth string            `json:"token_endpoint_auth,omitempty"`
 }
 
 func ConfigPath() (string, error) {
