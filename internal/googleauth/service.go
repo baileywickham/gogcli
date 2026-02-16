@@ -21,6 +21,8 @@ const (
 	ServiceTasks     Service = "tasks"
 	ServicePeople    Service = "people"
 	ServiceSheets    Service = "sheets"
+	ServiceForms     Service = "forms"
+	ServiceAppScript Service = "appscript"
 	ServiceGroups    Service = "groups"
 	ServiceKeep      Service = "keep"
 )
@@ -68,6 +70,8 @@ var serviceOrder = []Service{
 	ServiceTasks,
 	ServiceSheets,
 	ServicePeople,
+	ServiceForms,
+	ServiceAppScript,
 	ServiceGroups,
 	ServiceKeep,
 }
@@ -169,6 +173,23 @@ var serviceInfoByService = map[Service]serviceInfo{
 		user: true,
 		apis: []string{"Sheets API", "Drive API"},
 		note: "Export via Drive",
+	},
+	ServiceForms: {
+		scopes: []string{
+			"https://www.googleapis.com/auth/forms.body",
+			"https://www.googleapis.com/auth/forms.responses.readonly",
+		},
+		user: true,
+		apis: []string{"Forms API"},
+	},
+	ServiceAppScript: {
+		scopes: []string{
+			"https://www.googleapis.com/auth/script.projects",
+			"https://www.googleapis.com/auth/script.deployments",
+			"https://www.googleapis.com/auth/script.processes",
+		},
+		user: true,
+		apis: []string{"Apps Script API"},
 	},
 	ServiceGroups: {
 		scopes: []string{"https://www.googleapis.com/auth/cloud-identity.groups.readonly"},
@@ -478,6 +499,25 @@ func scopesForServiceWithOptions(service Service, opts ScopeOptions) ([]string, 
 		}
 
 		return []string{driveScopeValue(), sheetsScope}, nil
+	case ServiceForms:
+		formBodyScope := "https://www.googleapis.com/auth/forms.body"
+		if opts.Readonly {
+			formBodyScope = "https://www.googleapis.com/auth/forms.body.readonly"
+		}
+
+		return []string{
+			formBodyScope,
+			"https://www.googleapis.com/auth/forms.responses.readonly",
+		}, nil
+	case ServiceAppScript:
+		if opts.Readonly {
+			return []string{
+				"https://www.googleapis.com/auth/script.projects.readonly",
+				"https://www.googleapis.com/auth/script.deployments.readonly",
+			}, nil
+		}
+
+		return Scopes(service)
 	case ServiceGroups:
 		return Scopes(service)
 	case ServiceKeep:

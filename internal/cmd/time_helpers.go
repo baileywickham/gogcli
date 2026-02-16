@@ -133,7 +133,7 @@ func ResolveTimeRangeWithDefaults(ctx context.Context, svc *calendar.Service, fl
 
 		switch {
 		case flags.To != "":
-			to, err = parseTimeExpr(flags.To, now, loc)
+			to, err = parseTimeExprEndOfDay(flags.To, now, loc)
 			if err != nil {
 				return nil, fmt.Errorf("invalid --to: %w", err)
 			}
@@ -149,6 +149,61 @@ func ResolveTimeRangeWithDefaults(ctx context.Context, svc *calendar.Service, fl
 		To:       to,
 		Location: loc,
 	}, nil
+}
+
+// parseTimeExprEndOfDay is like parseTimeExpr but interprets date-only values
+// and relative day expressions as end of day (23:59:59.999999999) instead of
+// start of day. This is useful for --to flags where "2026-01-05" should mean
+// "through the end of Jan 5" rather than "midnight at the start of Jan 5".
+func parseTimeExprEndOfDay(expr string, now time.Time, loc *time.Location) (time.Time, error) {
+	t, err := parseTimeExpr(expr, now, loc)
+	if err != nil {
+		return t, err
+	}
+	// Only adjust to end-of-day for date-only or relative day expressions.
+	// If the input is a full timestamp (contains "T" or "t" indicating time
+	// components), respect the exact time the user specified — even midnight.
+	if isDateOnlyOrRelative(expr) {
+		return endOfDay(t), nil
+	}
+	return t, nil
+}
+
+// isDateOnlyOrRelative returns true if the expression is a date-only string
+// (YYYY-MM-DD) or a relative day keyword (today, tomorrow, yesterday, weekday
+// names). These should be adjusted to end-of-day when used as an upper bound.
+// Point-in-time values like "now" and full timestamps return false.
+func isDateOnlyOrRelative(expr string) bool {
+	trimmed := strings.TrimSpace(expr)
+	lower := strings.ToLower(trimmed)
+
+	// Relative day keywords
+	switch lower {
+	case "today", "tomorrow", "yesterday":
+		return true
+	}
+
+	// Weekday names: "monday", "next tuesday", etc.
+	candidate := lower
+	candidate = strings.TrimPrefix(candidate, "next ")
+	weekdays := []string{
+		"sunday", "sun", "monday", "mon", "tuesday", "tue",
+		"wednesday", "wed", "thursday", "thu", "friday", "fri", "saturday", "sat",
+	}
+	for _, wd := range weekdays {
+		if candidate == wd {
+			return true
+		}
+	}
+
+	// Date-only: YYYY-MM-DD (exactly 10 chars, no time component)
+	if len(trimmed) == 10 {
+		if _, err := time.Parse("2006-01-02", trimmed); err == nil {
+			return true
+		}
+	}
+
+	return false
 }
 
 // parseTimeExpr parses a time expression which can be:
