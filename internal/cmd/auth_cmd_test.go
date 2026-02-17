@@ -234,6 +234,10 @@ func TestAuthStatus_JSON(t *testing.T) {
 			Backend string `json:"backend"`
 			Source  string `json:"source"`
 		} `json:"keyring"`
+		TokenEndpoint struct {
+			Configured bool   `json:"configured"`
+			Endpoint   string `json:"endpoint"`
+		} `json:"token_endpoint"`
 	}
 	if err := json.Unmarshal([]byte(out), &payload); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -246,6 +250,54 @@ func TestAuthStatus_JSON(t *testing.T) {
 	}
 	if payload.Config.Path == "" {
 		t.Fatalf("expected config path")
+	}
+	if payload.TokenEndpoint.Configured {
+		t.Fatalf("expected token_endpoint not configured")
+	}
+	if payload.TokenEndpoint.Endpoint != "" {
+		t.Fatalf("expected empty token_endpoint, got: %q", payload.TokenEndpoint.Endpoint)
+	}
+}
+
+func TestAuthStatus_JSON_TokenEndpoint(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg-config"))
+	t.Setenv("GOG_KEYRING_BACKEND", "file")
+
+	cfgPath, err := config.ConfigPath()
+	if err != nil {
+		t.Fatalf("ConfigPath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(cfgPath, []byte(`{ "token_endpoint": "https://token.example.com/token" }`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	out := captureStdout(t, func() {
+		_ = captureStderr(t, func() {
+			if err := Execute([]string{"--json", "auth", "status"}); err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+		})
+	})
+
+	var payload struct {
+		TokenEndpoint struct {
+			Configured bool   `json:"configured"`
+			Endpoint   string `json:"endpoint"`
+		} `json:"token_endpoint"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !payload.TokenEndpoint.Configured {
+		t.Fatalf("expected token_endpoint configured")
+	}
+	if payload.TokenEndpoint.Endpoint != "https://token.example.com/token" {
+		t.Fatalf("unexpected token_endpoint: %q", payload.TokenEndpoint.Endpoint)
 	}
 }
 
@@ -281,6 +333,154 @@ func TestAuthStatus_Text_ConfigFile(t *testing.T) {
 	}
 	if !strings.Contains(out, "keyring_backend_source\tconfig") {
 		t.Fatalf("expected keyring_backend_source config, got: %q", out)
+	}
+	if !strings.Contains(out, "token_endpoint_configured\tfalse") {
+		t.Fatalf("expected token_endpoint_configured false, got: %q", out)
+	}
+}
+
+func TestAuthStatus_Text_TokenEndpoint(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg-config"))
+
+	cfgPath, err := config.ConfigPath()
+	if err != nil {
+		t.Fatalf("ConfigPath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(cfgPath, []byte(`{ "keyring_backend": "file", "token_endpoint": "https://token.example.com/token" }`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	out := captureStdout(t, func() {
+		_ = captureStderr(t, func() {
+			if err := Execute([]string{"auth", "status"}); err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+		})
+	})
+
+	if !strings.Contains(out, "token_endpoint_configured\ttrue") {
+		t.Fatalf("expected token_endpoint_configured true, got: %q", out)
+	}
+	if !strings.Contains(out, "token_endpoint\thttps://token.example.com/token") {
+		t.Fatalf("expected token_endpoint URL, got: %q", out)
+	}
+}
+
+func TestAuthListCheck_RemoteEndpoint_JSON(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg-config"))
+
+	cfgPath, err := config.ConfigPath()
+	if err != nil {
+		t.Fatalf("ConfigPath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(cfgPath, []byte(`{ "token_endpoint": "https://token.example.com/token" }`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	origOpen := openSecretsStore
+	origCheck := checkRefreshToken
+	t.Cleanup(func() {
+		openSecretsStore = origOpen
+		checkRefreshToken = origCheck
+	})
+
+	store := newMemSecretsStore()
+	openSecretsStore = func() (secrets.Store, error) { return store, nil }
+
+	checkCalled := false
+	checkRefreshToken = func(_ context.Context, _ string, _ string, _ []string, _ time.Duration) error {
+		checkCalled = true
+		return errors.New("should not be called")
+	}
+
+	_ = store.SetToken(config.DefaultClientName, "a@b.com", secrets.Token{RefreshToken: "rt1"})
+
+	out := captureStdout(t, func() {
+		_ = captureStderr(t, func() {
+			if err := Execute([]string{"--json", "auth", "list", "--check"}); err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+		})
+	})
+
+	if checkCalled {
+		t.Fatalf("checkRefreshToken should not be called when remote endpoint is configured")
+	}
+
+	var resp struct {
+		Accounts []struct {
+			Email string `json:"email"`
+			Valid *bool  `json:"valid,omitempty"`
+			Error string `json:"error,omitempty"`
+		} `json:"accounts"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("unmarshal: %v\nout=%q", err, out)
+	}
+	if len(resp.Accounts) != 1 {
+		t.Fatalf("expected 1 account, got: %#v", resp.Accounts)
+	}
+	if resp.Accounts[0].Valid == nil || !*resp.Accounts[0].Valid {
+		t.Fatalf("expected valid true, got: %#v", resp.Accounts[0])
+	}
+	if resp.Accounts[0].Error != "remote endpoint (not checked)" {
+		t.Fatalf("expected remote endpoint message, got: %q", resp.Accounts[0].Error)
+	}
+}
+
+func TestAuthListCheck_RemoteEndpoint_Text(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg-config"))
+
+	cfgPath, err := config.ConfigPath()
+	if err != nil {
+		t.Fatalf("ConfigPath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(cfgPath, []byte(`{ "token_endpoint": "https://token.example.com/token" }`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	origOpen := openSecretsStore
+	origCheck := checkRefreshToken
+	t.Cleanup(func() {
+		openSecretsStore = origOpen
+		checkRefreshToken = origCheck
+	})
+
+	store := newMemSecretsStore()
+	openSecretsStore = func() (secrets.Store, error) { return store, nil }
+
+	checkRefreshToken = func(_ context.Context, _ string, _ string, _ []string, _ time.Duration) error {
+		t.Fatal("checkRefreshToken should not be called when remote endpoint is configured")
+		return nil
+	}
+
+	_ = store.SetToken(config.DefaultClientName, "a@b.com", secrets.Token{RefreshToken: "rt1"})
+
+	out := captureStdout(t, func() {
+		_ = captureStderr(t, func() {
+			if err := Execute([]string{"auth", "list", "--check"}); err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+		})
+	})
+
+	if !strings.Contains(out, "remote endpoint (not checked)") {
+		t.Fatalf("expected 'remote endpoint (not checked)' in output, got: %q", out)
 	}
 }
 

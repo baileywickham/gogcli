@@ -48,6 +48,7 @@ const (
 	authTypeOAuth               = "oauth"
 	authTypeServiceAccount      = "service_account"
 	authTypeOAuthServiceAccount = "oauth+service_account"
+	authTypeRemoteEndpoint      = "remote_endpoint"
 )
 
 type AuthCmd struct {
@@ -688,6 +689,13 @@ func (c *AuthStatusCmd) Run(ctx context.Context, flags *RootFlags) error {
 		return err
 	}
 
+	cfg, err := config.ReadConfig()
+	if err != nil {
+		return err
+	}
+	tokenEndpoint := strings.TrimSpace(cfg.TokenEndpoint)
+	tokenEndpointConfigured := tokenEndpoint != ""
+
 	account := ""
 	authPreferred := ""
 	serviceAccountConfigured := false
@@ -715,7 +723,9 @@ func (c *AuthStatusCmd) Run(ctx context.Context, flags *RootFlags) error {
 				serviceAccountConfigured = true
 				serviceAccountPath = p
 			}
-			if serviceAccountConfigured {
+			if tokenEndpointConfigured {
+				authPreferred = authTypeRemoteEndpoint
+			} else if serviceAccountConfigured {
 				authPreferred = authTypeServiceAccount
 			} else {
 				authPreferred = authTypeOAuth
@@ -733,6 +743,10 @@ func (c *AuthStatusCmd) Run(ctx context.Context, flags *RootFlags) error {
 				"backend": backendInfo.Value,
 				"source":  backendInfo.Source,
 			},
+			"token_endpoint": map[string]any{
+				"configured": tokenEndpointConfigured,
+				"endpoint":   tokenEndpoint,
+			},
 			"account": map[string]any{
 				"email":                      account,
 				"client":                     client,
@@ -748,6 +762,10 @@ func (c *AuthStatusCmd) Run(ctx context.Context, flags *RootFlags) error {
 	u.Out().Printf("config_exists\t%t", configExists)
 	u.Out().Printf("keyring_backend\t%s", backendInfo.Value)
 	u.Out().Printf("keyring_backend_source\t%s", backendInfo.Source)
+	u.Out().Printf("token_endpoint_configured\t%t", tokenEndpointConfigured)
+	if tokenEndpointConfigured {
+		u.Out().Printf("token_endpoint\t%s", tokenEndpoint)
+	}
 	if account != "" {
 		u.Out().Printf("account\t%s", account)
 		u.Out().Printf("client\t%s", client)
@@ -766,6 +784,13 @@ func (c *AuthStatusCmd) Run(ctx context.Context, flags *RootFlags) error {
 
 func (c *AuthListCmd) Run(ctx context.Context, _ *RootFlags) error {
 	u := ui.FromContext(ctx)
+
+	cfg, err := config.ReadConfig()
+	if err != nil {
+		return err
+	}
+	remoteEndpoint := strings.TrimSpace(cfg.TokenEndpoint) != ""
+
 	store, err := openSecretsStore()
 	if err != nil {
 		return err
@@ -884,7 +909,11 @@ func (c *AuthListCmd) Run(ctx context.Context, _ *RootFlags) error {
 				it.Client = e.Token.Client
 			}
 			if c.Check {
-				if e.Token == nil {
+				if remoteEndpoint {
+					valid := true
+					it.Valid = &valid
+					it.Error = "remote endpoint (not checked)"
+				} else if e.Token == nil {
 					valid := true
 					it.Valid = &valid
 					it.Error = "service account (not checked)"
@@ -935,6 +964,10 @@ func (c *AuthListCmd) Run(ctx context.Context, _ *RootFlags) error {
 		}
 
 		if c.Check {
+			if remoteEndpoint {
+				u.Out().Printf("%s\t%s\t%s\t%s\t%t\t%s\t%s", e.Email, client, servicesCSV, created, true, "remote endpoint (not checked)", auth)
+				continue
+			}
 			if e.Token == nil {
 				u.Out().Printf("%s\t%s\t%s\t%s\t%t\t%s\t%s", e.Email, client, servicesCSV, created, true, "service account (not checked)", auth)
 				continue
