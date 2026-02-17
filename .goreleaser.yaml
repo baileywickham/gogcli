@@ -36,7 +36,8 @@ builds:
       - darwin_arm64
 
 archives:
-  - builds:
+  - id: default
+    builds:
       - gog
       - gog_darwin
     format: tar.gz
@@ -44,6 +45,11 @@ archives:
     format_overrides:
       - goos: windows
         format: zip
+  - id: standalone
+    builds:
+      - gog
+    format: binary
+    name_template: "gog_{{ .Os }}_{{ .Arch }}"
 
 checksum:
   name_template: checksums.txt
