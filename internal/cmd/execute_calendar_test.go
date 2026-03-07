@@ -124,6 +124,63 @@ func TestExecute_CalendarSubscribe_JSON(t *testing.T) {
 	}
 }
 
+func TestExecute_CalendarSubscribe_Flags(t *testing.T) {
+	origNew := newCalendarService
+	t.Cleanup(func() { newCalendarService = origNew })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !(strings.Contains(r.URL.Path, "calendarList") && r.Method == http.MethodPost) {
+			http.NotFound(w, r)
+			return
+		}
+
+		var req struct {
+			ID       string `json:"id"`
+			ColorID  string `json:"colorId"`
+			Hidden   bool   `json:"hidden"`
+			Selected bool   `json:"selected"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.ID != "team@example.com" {
+			t.Fatalf("unexpected calendar id: %q", req.ID)
+		}
+		if req.ColorID != "24" {
+			t.Fatalf("unexpected color id: %q", req.ColorID)
+		}
+		if !req.Hidden {
+			t.Fatalf("expected hidden=true")
+		}
+		if req.Selected {
+			t.Fatalf("expected selected=false")
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":         req.ID,
+			"summary":    "Team Calendar",
+			"accessRole": "reader",
+		})
+	}))
+	defer srv.Close()
+
+	svc, err := calendar.NewService(context.Background(),
+		option.WithoutAuthentication(),
+		option.WithHTTPClient(srv.Client()),
+		option.WithEndpoint(srv.URL+"/"),
+	)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	newCalendarService = func(context.Context, string) (*calendar.Service, error) { return svc, nil }
+
+	if err := Execute([]string{"--account", "a@b.com", "calendar", "subscribe", "--color-id", "24", "--hidden", "--no-selected", "team@example.com"}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+}
+
 func TestExecute_CalendarSubscribe_Text(t *testing.T) {
 	origNew := newCalendarService
 	t.Cleanup(func() { newCalendarService = origNew })

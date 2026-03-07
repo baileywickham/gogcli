@@ -27,6 +27,21 @@ func validateColorId(s string) (string, error) {
 	return s, nil
 }
 
+func validateCalendarColorId(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", nil
+	}
+	id, err := strconv.Atoi(s)
+	if err != nil {
+		return "", fmt.Errorf("invalid calendar color ID: %q (must be 1-24)", s)
+	}
+	if id < 1 || id > 24 {
+		return "", fmt.Errorf("calendar color ID must be 1-24 (got %d)", id)
+	}
+	return s, nil
+}
+
 func validateVisibility(s string) (string, error) {
 	s = strings.TrimSpace(strings.ToLower(s))
 	if s == "" {

@@ -125,6 +125,10 @@ func (c *CalendarSubscribeCmd) Run(ctx context.Context, flags *RootFlags) error 
 	if calendarID == "" {
 		return usage("calendarId required")
 	}
+	colorID, err := validateCalendarColorId(c.ColorID)
+	if err != nil {
+		return err
+	}
 
 	svc, err := newCalendarService(ctx, account)
 	if err != nil {
@@ -136,8 +140,8 @@ func (c *CalendarSubscribeCmd) Run(ctx context.Context, flags *RootFlags) error 
 		Hidden:   c.Hidden,
 		Selected: c.Selected,
 	}
-	if c.ColorID != "" {
-		entry.ColorId = c.ColorID
+	if colorID != "" {
+		entry.ColorId = colorID
 	}
 
 	added, err := svc.CalendarList.Insert(entry).Do()
