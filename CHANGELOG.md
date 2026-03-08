@@ -24,6 +24,7 @@
 
 ### Fixed
 - Build: refresh the dependency stack to Go 1.26.1, current Go indirects, GitHub Actions v6/v7 pins, and current Cloudflare worker dependencies.
+- Security: redact stored Gmail watch webhook bearer tokens in `gmail watch status` text and JSON output unless `--show-secrets` is set. (#136) — thanks @paveg.
 - Calendar: respond patches only attendees to avoid custom reminders validation errors. (#265) — thanks @sebasrodriguez.
 - Contacts: fix grouped parameter types in CRUD helpers to restore builds on newer Go toolchains. (#355) — thanks @laihenyi.
 - Timezone: embed the IANA timezone database so Windows builds can resolve calendar timezones correctly. (#388) — thanks @visionik.
