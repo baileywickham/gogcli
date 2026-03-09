@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -320,8 +322,8 @@ func TestDocsWriteUpdate_FileInputErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for non-existent file, got nil")
 	}
-	if !strings.Contains(err.Error(), "no such file") {
-		t.Fatalf("expected 'no such file' error, got: %v", err)
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("expected fs.ErrNotExist, got: %v", err)
 	}
 
 	// Test with empty file
