@@ -25,6 +25,7 @@ const (
 	ServiceAppScript Service = "appscript"
 	ServiceGroups    Service = "groups"
 	ServiceKeep      Service = "keep"
+	ServiceAdmin     Service = "admin"
 )
 
 const (
@@ -36,6 +37,7 @@ const (
 var (
 	errUnknownService    = errors.New("unknown service")
 	errInvalidDriveScope = errors.New("invalid drive scope")
+	errInvalidGmailScope = errors.New("invalid gmail scope")
 )
 
 type DriveScopeMode string
@@ -46,9 +48,18 @@ const (
 	DriveScopeFile     DriveScopeMode = "file"
 )
 
+type GmailScopeMode string
+
+const (
+	GmailScopeFull     GmailScopeMode = "full"
+	GmailScopeReadonly GmailScopeMode = "readonly"
+)
+
 type ScopeOptions struct {
-	Readonly   bool
-	DriveScope DriveScopeMode
+	Readonly    bool
+	DriveScope  DriveScopeMode
+	GmailScope  GmailScopeMode
+	ExtraScopes []string
 }
 
 type serviceInfo struct {
@@ -74,6 +85,7 @@ var serviceOrder = []Service{
 	ServiceAppScript,
 	ServiceGroups,
 	ServiceKeep,
+	ServiceAdmin,
 }
 
 var serviceInfoByService = map[Service]serviceInfo{
@@ -198,10 +210,20 @@ var serviceInfoByService = map[Service]serviceInfo{
 		note:   "Workspace only",
 	},
 	ServiceKeep: {
-		scopes: []string{"https://www.googleapis.com/auth/keep.readonly"},
+		scopes: []string{"https://www.googleapis.com/auth/keep"},
 		user:   false,
 		apis:   []string{"Keep API"},
 		note:   "Workspace only; service account (domain-wide delegation)",
+	},
+	ServiceAdmin: {
+		scopes: []string{
+			"https://www.googleapis.com/auth/admin.directory.user",
+			"https://www.googleapis.com/auth/admin.directory.group",
+			"https://www.googleapis.com/auth/admin.directory.group.member",
+		},
+		user: false,
+		apis: []string{"Admin SDK Directory API"},
+		note: "Workspace only; service account with domain-wide delegation required",
 	},
 }
 
@@ -365,7 +387,12 @@ func ScopesForManageWithOptions(services []Service, opts ScopeOptions) ([]string
 		return nil, err
 	}
 
-	return mergeScopes(scopes, []string{scopeOpenID, scopeEmail, scopeUserinfoEmail}), nil
+	merged := mergeScopes(scopes, []string{scopeOpenID, scopeEmail, scopeUserinfoEmail})
+	if len(opts.ExtraScopes) > 0 {
+		merged = mergeScopes(merged, opts.ExtraScopes)
+	}
+
+	return merged, nil
 }
 
 func scopesForServicesWithOptions(services []Service, opts ScopeOptions) ([]string, error) {
@@ -400,6 +427,13 @@ func scopesForServiceWithOptions(service Service, opts ScopeOptions) ([]string, 
 		return nil, fmt.Errorf("%w %q (expected full|readonly|file)", errInvalidDriveScope, opts.DriveScope)
 	}
 
+	gmailScope := strings.TrimSpace(string(opts.GmailScope))
+	switch gmailScope {
+	case "", string(GmailScopeFull), string(GmailScopeReadonly):
+	default:
+		return nil, fmt.Errorf("%w %q (expected full|readonly)", errInvalidGmailScope, opts.GmailScope)
+	}
+
 	driveScopeValue := func() string {
 		if opts.Readonly {
 			return "https://www.googleapis.com/auth/drive.readonly"
@@ -417,7 +451,7 @@ func scopesForServiceWithOptions(service Service, opts ScopeOptions) ([]string, 
 
 	switch service {
 	case ServiceGmail:
-		if opts.Readonly {
+		if opts.Readonly || opts.GmailScope == GmailScopeReadonly {
 			return []string{"https://www.googleapis.com/auth/gmail.readonly"}, nil
 		}
 

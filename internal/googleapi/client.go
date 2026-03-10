@@ -3,99 +3,34 @@ package googleapi
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
-	"github.com/99designs/keyring"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/option"
 
-	"github.com/steipete/gogcli/internal/authclient"
-	"github.com/steipete/gogcli/internal/config"
 	"github.com/steipete/gogcli/internal/googleauth"
-	"github.com/steipete/gogcli/internal/secrets"
 )
 
-const defaultHTTPTimeout = 30 * time.Second
+const (
+	// responseHeaderTimeout limits the time waiting for the server to begin
+	// responding (send response headers). Once headers arrive and the body
+	// starts streaming, there is no hard cap — large file downloads are not
+	// cut short. This replaces the former http.Client.Timeout which applied
+	// to the entire request lifecycle and caused timeouts on large Drive
+	// file downloads.
+	responseHeaderTimeout = 30 * time.Second
 
-var (
-	readClientCredentials = config.ReadClientCredentialsFor
-	openSecretsStore      = secrets.OpenDefault
-	readConfigForClient   = config.ReadConfig
+	// tokenExchangeTimeout is applied to the short-lived HTTP client used
+	// for OAuth2 token refresh exchanges, which should always be fast.
+	tokenExchangeTimeout = 30 * time.Second
 )
 
-func tokenSourceForAccount(ctx context.Context, service googleauth.Service, email string) (oauth2.TokenSource, error) {
-	scopes, err := googleauth.Scopes(service)
-	if err != nil {
-		return nil, fmt.Errorf("resolve scopes: %w", err)
-	}
-
-	cfg, err := readConfigForClient()
-	if err != nil {
-		return nil, fmt.Errorf("read config: %w", err)
-	}
-
-	if cfg.TokenEndpoint != "" {
-		slog.Debug("using remote token endpoint", "email", email, "endpoint", cfg.TokenEndpoint)
-
-		return &remoteTokenSource{
-			endpoint: cfg.TokenEndpoint,
-			auth:     cfg.TokenEndpointAuth,
-			email:    email,
-			scopes:   scopes,
-		}, nil
-	}
-
-	client, err := authclient.ResolveClient(ctx, email)
-	if err != nil {
-		return nil, fmt.Errorf("resolve client: %w", err)
-	}
-
-	creds, err := readClientCredentials(client)
-	if err != nil {
-		return nil, fmt.Errorf("read credentials: %w", err)
-	}
-
-	return tokenSourceForAccountScopes(ctx, string(service), email, client, creds.ClientID, creds.ClientSecret, scopes)
-}
-
-func tokenSourceForAccountScopes(ctx context.Context, serviceLabel string, email string, client string, clientID string, clientSecret string, requiredScopes []string) (oauth2.TokenSource, error) {
-	var store secrets.Store
-
-	if s, err := openSecretsStore(); err != nil {
-		return nil, fmt.Errorf("open secrets store: %w", err)
-	} else {
-		store = s
-	}
-
-	var tok secrets.Token
-
-	if t, err := store.GetToken(client, email); err != nil {
-		if errors.Is(err, keyring.ErrKeyNotFound) {
-			return nil, &AuthRequiredError{Service: serviceLabel, Email: email, Client: client, Cause: err}
-		}
-
-		return nil, fmt.Errorf("get token for %s: %w", email, err)
-	} else {
-		tok = t
-	}
-
-	cfg := oauth2.Config{
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		Endpoint:     google.Endpoint,
-		Scopes:       requiredScopes,
-	}
-
-	// Ensure refresh-token exchanges don't hang forever.
-	ctx = context.WithValue(ctx, oauth2.HTTPClient, &http.Client{Timeout: defaultHTTPTimeout})
-
-	return cfg.TokenSource(ctx, &oauth2.Token{RefreshToken: tok.RefreshToken}), nil
-}
+var newADCTokenSource = google.DefaultTokenSource
 
 func optionsForAccount(ctx context.Context, service googleauth.Service, email string) ([]option.ClientOption, error) {
 	scopes, err := googleauth.Scopes(service)
@@ -106,59 +41,48 @@ func optionsForAccount(ctx context.Context, service googleauth.Service, email st
 	return optionsForAccountScopes(ctx, string(service), email, scopes)
 }
 
+// IsADCMode reports whether Application Default Credentials mode is active.
+// When GOG_AUTH_MODE=adc, the CLI authenticates using the ambient credentials
+// (e.g. GKE Workload Identity, GOOGLE_APPLICATION_CREDENTIALS, or gcloud ADC)
+// instead of the keyring-based OAuth flow. The service account accesses only
+// resources explicitly shared with it — no domain-wide delegation needed.
+func IsADCMode() bool {
+	return os.Getenv("GOG_AUTH_MODE") == "adc"
+}
+
 func optionsForAccountScopes(ctx context.Context, serviceLabel string, email string, scopes []string) ([]option.ClientOption, error) {
 	slog.Debug("creating client options with custom scopes", "serviceLabel", serviceLabel, "email", email)
 
 	var ts oauth2.TokenSource
 
-	cfg, err := readConfigForClient()
-	if err != nil {
-		return nil, fmt.Errorf("read config: %w", err)
-	}
+	if IsADCMode() {
+		slog.Debug("using Application Default Credentials (GOG_AUTH_MODE=adc)", "serviceLabel", serviceLabel)
 
-	if cfg.TokenEndpoint != "" {
-		slog.Debug("using remote token endpoint", "email", email, "endpoint", cfg.TokenEndpoint)
-
-		ts = &remoteTokenSource{
-			endpoint: cfg.TokenEndpoint,
-			auth:     cfg.TokenEndpointAuth,
-			email:    email,
-			scopes:   scopes,
-		}
-	} else if serviceAccountTS, saPath, ok, err := tokenSourceForServiceAccountScopes(ctx, email, scopes); err != nil {
-		return nil, fmt.Errorf("service account token source: %w", err)
-	} else if ok {
-		slog.Debug("using service account credentials", "email", email, "path", saPath)
-		ts = serviceAccountTS
-	} else {
-		client, err := authclient.ResolveClient(ctx, email)
+		adcTS, err := newADCTokenSource(ctx, scopes...)
 		if err != nil {
-			return nil, fmt.Errorf("resolve client: %w", err)
+			return nil, fmt.Errorf("ADC token source: %w", err)
 		}
 
-		var creds config.ClientCredentials
+		ts = adcTS
+	} else {
+		var err error
 
-		if c, err := readClientCredentials(client); err != nil {
-			return nil, fmt.Errorf("read credentials: %w", err)
-		} else {
-			creds = c
-		}
-
-		if tokenSource, err := tokenSourceForAccountScopes(ctx, serviceLabel, email, client, creds.ClientID, creds.ClientSecret, scopes); err != nil {
-			return nil, fmt.Errorf("token source: %w", err)
-		} else {
-			ts = tokenSource
+		ts, err = tokenSourceForAvailableAccountAuth(ctx, serviceLabel, email, scopes)
+		if err != nil {
+			return nil, err
 		}
 	}
+
 	baseTransport := newBaseTransport()
-	// Wrap with retry logic for 429 and 5xx errors
 	retryTransport := NewRetryTransport(&oauth2.Transport{
 		Source: ts,
 		Base:   baseTransport,
 	})
 	c := &http.Client{
 		Transport: retryTransport,
-		Timeout:   defaultHTTPTimeout,
+		// No Timeout set: large file downloads (Drive videos, etc.) must not
+		// be cut short. Server responsiveness is guarded by the transport's
+		// ResponseHeaderTimeout instead.
 	}
 
 	slog.Debug("client options with custom scopes created successfully", "serviceLabel", serviceLabel, "email", email)
@@ -174,11 +98,14 @@ func newBaseTransport() *http.Transport {
 			TLSClientConfig: &tls.Config{
 				MinVersion: tls.VersionTLS12,
 			},
+			ResponseHeaderTimeout: responseHeaderTimeout,
 		}
 	}
 
 	// Clone() deep-copies TLSClientConfig, so no additional clone needed.
 	transport := defaultTransport.Clone()
+	transport.ResponseHeaderTimeout = responseHeaderTimeout
+
 	if transport.TLSClientConfig == nil {
 		transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 		return transport

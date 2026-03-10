@@ -147,6 +147,90 @@ func TestDocsCreateCopyCat_JSON(t *testing.T) {
 	}
 }
 
+func TestDocsCreate_Pageless(t *testing.T) {
+	origNew := newDriveService
+	origDocs := newDocsService
+	t.Cleanup(func() {
+		newDriveService = origNew
+		newDocsService = origDocs
+	})
+
+	var batchRequests [][]*docs.Request
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		drivePath := strings.TrimPrefix(path, "/drive/v3")
+		switch {
+		case drivePath == "/files" && r.Method == http.MethodPost:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":          "doc1",
+				"name":        "Doc",
+				"mimeType":    "application/vnd.google-apps.document",
+				"webViewLink": "http://example.com/doc1",
+			})
+			return
+		case r.Method == http.MethodPost && strings.Contains(path, ":batchUpdate"):
+			var req docs.BatchUpdateDocumentRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			batchRequests = append(batchRequests, req.Requests)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"documentId": "doc1"})
+			return
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}))
+	defer srv.Close()
+
+	driveSvc, err := drive.NewService(context.Background(),
+		option.WithoutAuthentication(),
+		option.WithHTTPClient(srv.Client()),
+		option.WithEndpoint(srv.URL+"/"),
+	)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	newDriveService = func(context.Context, string) (*drive.Service, error) { return driveSvc, nil }
+
+	docSvc, err := docs.NewService(context.Background(),
+		option.WithoutAuthentication(),
+		option.WithHTTPClient(srv.Client()),
+		option.WithEndpoint(srv.URL+"/"),
+	)
+	if err != nil {
+		t.Fatalf("NewDocsService: %v", err)
+	}
+	newDocsService = func(context.Context, string) (*docs.Service, error) { return docSvc, nil }
+
+	flags := &RootFlags{Account: "a@b.com"}
+	u, uiErr := ui.New(ui.Options{Stdout: io.Discard, Stderr: io.Discard, Color: "never"})
+	if uiErr != nil {
+		t.Fatalf("ui.New: %v", uiErr)
+	}
+	ctx := outfmt.WithMode(ui.WithUI(context.Background(), u), outfmt.Mode{JSON: true})
+
+	_ = captureStdout(t, func() {
+		cmd := &DocsCreateCmd{}
+		if err := runKong(t, cmd, []string{"Doc", "--pageless"}, ctx, flags); err != nil {
+			t.Fatalf("create pageless: %v", err)
+		}
+	})
+
+	if len(batchRequests) != 1 {
+		t.Fatalf("expected 1 pageless batch request, got %d", len(batchRequests))
+	}
+	if got := batchRequests[0]; len(got) != 1 || got[0].UpdateDocumentStyle == nil {
+		t.Fatalf("unexpected pageless create request: %#v", got)
+	}
+	if got := batchRequests[0][0].UpdateDocumentStyle; got.Fields != "documentFormat" || got.DocumentStyle.DocumentFormat.DocumentMode != "PAGELESS" {
+		t.Fatalf("unexpected pageless create style request: %#v", got)
+	}
+}
+
 // tabsDocResponse returns a JSON response for a document with multiple tabs
 // (using includeTabsContent=true). The body/content fields are empty because
 // the Docs API populates doc.Tabs instead when that flag is set.
@@ -368,6 +452,68 @@ func TestDocsCat_AllTabs_JSON(t *testing.T) {
 	}
 }
 
+func TestDocsCat_Raw(t *testing.T) {
+	origDocs := newDocsService
+	t.Cleanup(func() { newDocsService = origDocs })
+
+	docSvc, cleanup := newTabsTestServer(t)
+	defer cleanup()
+	newDocsService = func(context.Context, string) (*docs.Service, error) { return docSvc, nil }
+
+	flags := &RootFlags{Account: "a@b.com"}
+	u, _ := ui.New(ui.Options{Stdout: io.Discard, Stderr: io.Discard, Color: "never"})
+	ctx := ui.WithUI(context.Background(), u)
+
+	out := captureStdout(t, func() {
+		cmd := &DocsCatCmd{}
+		if err := runKong(t, cmd, []string{"doc1", "--raw"}, ctx, flags); err != nil {
+			t.Fatalf("cat --raw: %v", err)
+		}
+	})
+
+	var result map[string]any
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("raw JSON parse: %v\nraw: %q", err, out)
+	}
+	// Raw output should contain the documentId field from the API response.
+	if result["documentId"] != "doc1" {
+		t.Fatalf("expected documentId=doc1, got: %v", result["documentId"])
+	}
+	// Should be pretty-printed (contain newlines + indentation).
+	if !strings.Contains(out, "\n  ") {
+		t.Fatal("expected pretty-printed JSON with indentation")
+	}
+}
+
+func TestDocsCat_Raw_AllTabs(t *testing.T) {
+	origDocs := newDocsService
+	t.Cleanup(func() { newDocsService = origDocs })
+
+	docSvc, cleanup := newTabsTestServer(t)
+	defer cleanup()
+	newDocsService = func(context.Context, string) (*docs.Service, error) { return docSvc, nil }
+
+	flags := &RootFlags{Account: "a@b.com"}
+	u, _ := ui.New(ui.Options{Stdout: io.Discard, Stderr: io.Discard, Color: "never"})
+	ctx := ui.WithUI(context.Background(), u)
+
+	out := captureStdout(t, func() {
+		cmd := &DocsCatCmd{}
+		if err := runKong(t, cmd, []string{"doc1", "--raw", "--all-tabs"}, ctx, flags); err != nil {
+			t.Fatalf("cat --raw --all-tabs: %v", err)
+		}
+	})
+
+	var result map[string]any
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("raw JSON parse: %v\nraw: %q", err, out)
+	}
+	// With --all-tabs, the raw response should include tabs content.
+	if _, ok := result["tabs"]; !ok {
+		t.Fatal("expected tabs field in raw --all-tabs output")
+	}
+}
+
 func TestDocsCat_SingleTab(t *testing.T) {
 	origDocs := newDocsService
 	t.Cleanup(func() { newDocsService = origDocs })
@@ -422,70 +568,6 @@ func TestDocsCat_TabNotFound(t *testing.T) {
 	err := runKong(t, cmd, []string{"doc1", "--tab", "Nonexistent"}, ctx, flags)
 	if err == nil || !strings.Contains(err.Error(), "tab not found") {
 		t.Fatalf("expected tab not found error, got: %v", err)
-	}
-}
-
-func TestDocsListTabs(t *testing.T) {
-	origDocs := newDocsService
-	t.Cleanup(func() { newDocsService = origDocs })
-
-	docSvc, cleanup := newTabsTestServer(t)
-	defer cleanup()
-	newDocsService = func(context.Context, string) (*docs.Service, error) { return docSvc, nil }
-
-	flags := &RootFlags{Account: "a@b.com"}
-
-	// Text output.
-	out := captureStdout(t, func() {
-		u, _ := ui.New(ui.Options{Stdout: os.Stdout, Stderr: io.Discard, Color: "never"})
-		ctx := ui.WithUI(context.Background(), u)
-		cmd := &DocsListTabsCmd{}
-		if err := runKong(t, cmd, []string{"doc1"}, ctx, flags); err != nil {
-			t.Fatalf("list-tabs: %v", err)
-		}
-	})
-	if !strings.Contains(out, "t.0") || !strings.Contains(out, "Overview") {
-		t.Fatalf("missing tab info in: %q", out)
-	}
-	if !strings.Contains(out, "t.abc") || !strings.Contains(out, "Details") {
-		t.Fatalf("missing tab info in: %q", out)
-	}
-	if !strings.Contains(out, "t.child1") || !strings.Contains(out, "Sub-Detail") {
-		t.Fatalf("missing child tab info in: %q", out)
-	}
-}
-
-func TestDocsListTabs_JSON(t *testing.T) {
-	origDocs := newDocsService
-	t.Cleanup(func() { newDocsService = origDocs })
-
-	docSvc, cleanup := newTabsTestServer(t)
-	defer cleanup()
-	newDocsService = func(context.Context, string) (*docs.Service, error) { return docSvc, nil }
-
-	flags := &RootFlags{Account: "a@b.com"}
-	u, _ := ui.New(ui.Options{Stdout: io.Discard, Stderr: io.Discard, Color: "never"})
-	ctx := ui.WithUI(context.Background(), u)
-	ctx = outfmt.WithMode(ctx, outfmt.Mode{JSON: true})
-
-	out := captureStdout(t, func() {
-		cmd := &DocsListTabsCmd{}
-		if err := runKong(t, cmd, []string{"doc1"}, ctx, flags); err != nil {
-			t.Fatalf("list-tabs --json: %v", err)
-		}
-	})
-
-	var result map[string]any
-	if err := json.Unmarshal([]byte(out), &result); err != nil {
-		t.Fatalf("JSON parse: %v\nraw: %q", err, out)
-	}
-	tabs, ok := result["tabs"].([]any)
-	if !ok || len(tabs) != 3 {
-		t.Fatalf("expected 3 tabs, got: %v", result)
-	}
-	child := tabs[2].(map[string]any)
-	if child["id"] != "t.child1" || child["parentTabId"] != "t.abc" {
-		t.Fatalf("unexpected child tab: %v", child)
 	}
 }
 

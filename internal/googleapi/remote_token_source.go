@@ -51,7 +51,7 @@ func (r *remoteTokenSource) Token() (*oauth2.Token, error) {
 
 	client := r.httpClient
 	if client == nil {
-		client = &http.Client{Timeout: defaultHTTPTimeout}
+		client = &http.Client{Timeout: tokenExchangeTimeout}
 	}
 
 	resp, err := client.Do(req)
