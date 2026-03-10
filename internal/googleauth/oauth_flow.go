@@ -20,15 +20,18 @@ import (
 )
 
 type AuthorizeOptions struct {
-	Services     []Service
-	Scopes       []string
-	Manual       bool
-	ForceConsent bool
-	Timeout      time.Duration
-	Client       string
-	AuthCode     string
-	AuthURL      string
-	RequireState bool
+	Services                    []Service
+	Scopes                      []string
+	Manual                      bool
+	ForceConsent                bool
+	DisableIncludeGrantedScopes bool
+	Timeout                     time.Duration
+	Client                      string
+	AuthCode                    string
+	AuthURL                     string
+	ListenAddr                  string
+	RedirectURI                 string
+	RequireState                bool
 }
 
 type ManualAuthURLResult struct {
@@ -78,6 +81,15 @@ func Authorize(ctx context.Context, opts AuthorizeOptions) (string, error) {
 		opts.Timeout = 2 * time.Minute
 	}
 
+	if strings.TrimSpace(opts.RedirectURI) != "" {
+		redirectURI, err := normalizeRedirectURI(opts.RedirectURI)
+		if err != nil {
+			return "", err
+		}
+
+		opts.RedirectURI = redirectURI
+	}
+
 	if strings.TrimSpace(opts.AuthURL) != "" && strings.TrimSpace(opts.AuthCode) != "" {
 		return "", errInvalidAuthorizeOptionsAuthURLAndCode
 	}
@@ -111,15 +123,19 @@ func authorizeServer(ctx context.Context, opts AuthorizeOptions, creds config.Cl
 		return "", err
 	}
 
-	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", "127.0.0.1:0")
+	listenAddr, err := normalizeListenAddr(opts.ListenAddr)
+	if err != nil {
+		return "", err
+	}
+
+	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", listenAddr)
 	if err != nil {
 		return "", fmt.Errorf("listen for callback: %w", err)
 	}
 
 	defer func() { _ = ln.Close() }()
 
-	port := ln.Addr().(*net.TCPAddr).Port
-	redirectURI := fmt.Sprintf("http://127.0.0.1:%d/oauth2/callback", port)
+	redirectURI := resolveServerRedirectURI(ln, opts.RedirectURI)
 
 	cfg := oauth2.Config{
 		ClientID:     creds.ClientID,
@@ -204,11 +220,15 @@ func authorizeServer(ctx context.Context, opts AuthorizeOptions, creds config.Cl
 		}
 	}()
 
-	authURL := cfg.AuthCodeURL(state, authURLParams(opts.ForceConsent)...)
+	authURL := cfg.AuthCodeURL(state, authURLParams(opts.ForceConsent, !opts.DisableIncludeGrantedScopes)...)
 
 	fmt.Fprintln(os.Stderr, "Opening browser for authorization…")
 	fmt.Fprintln(os.Stderr, "If the browser doesn't open, visit this URL:")
 	fmt.Fprintln(os.Stderr, authURL)
+
+	if strings.TrimSpace(opts.ListenAddr) != "" {
+		fmt.Fprintf(os.Stderr, "Server listening on %s\n", ln.Addr().String())
+	}
 	_ = openBrowserFn(authURL)
 
 	select {
@@ -245,11 +265,12 @@ func authorizeServer(ctx context.Context, opts AuthorizeOptions, creds config.Cl
 	}
 }
 
-func authURLParams(forceConsent bool) []oauth2.AuthCodeOption {
-	opts := []oauth2.AuthCodeOption{
-		oauth2.AccessTypeOffline,
-		oauth2.SetAuthURLParam("include_granted_scopes", "true"),
+func authURLParams(forceConsent bool, includeGrantedScopes bool) []oauth2.AuthCodeOption {
+	opts := []oauth2.AuthCodeOption{oauth2.AccessTypeOffline}
+	if includeGrantedScopes {
+		opts = append(opts, oauth2.SetAuthURLParam("include_granted_scopes", "true"))
 	}
+
 	if forceConsent {
 		opts = append(opts, oauth2.SetAuthURLParam("prompt", "consent"))
 	}
@@ -283,7 +304,7 @@ func renderSuccessPage(w http.ResponseWriter) {
 func renderErrorPage(w http.ResponseWriter, errorMsg string) {
 	tmpl, err := template.New("error").Parse(errorTemplate)
 	if err != nil {
-		_, _ = w.Write([]byte("Error: " + errorMsg))
+		_, _ = w.Write([]byte("Error: " + template.HTMLEscapeString(errorMsg))) //nolint:gosec // string is escaped before fallback render
 		return
 	}
 	_ = tmpl.Execute(w, struct{ Error string }{Error: errorMsg})

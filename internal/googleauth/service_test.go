@@ -65,7 +65,7 @@ func TestExtractCodeAndState_Errors(t *testing.T) {
 
 func TestAllServices(t *testing.T) {
 	svcs := AllServices()
-	if len(svcs) != 15 {
+	if len(svcs) != 16 {
 		t.Fatalf("unexpected: %v", svcs)
 	}
 	seen := make(map[Service]bool)
@@ -74,7 +74,7 @@ func TestAllServices(t *testing.T) {
 		seen[s] = true
 	}
 
-	for _, want := range []Service{ServiceGmail, ServiceCalendar, ServiceChat, ServiceClassroom, ServiceDrive, ServiceDocs, ServiceSlides, ServiceContacts, ServiceTasks, ServicePeople, ServiceSheets, ServiceForms, ServiceAppScript, ServiceGroups, ServiceKeep} {
+	for _, want := range []Service{ServiceGmail, ServiceCalendar, ServiceChat, ServiceClassroom, ServiceDrive, ServiceDocs, ServiceSlides, ServiceContacts, ServiceTasks, ServicePeople, ServiceSheets, ServiceForms, ServiceAppScript, ServiceGroups, ServiceKeep, ServiceAdmin} {
 		if !seen[want] {
 			t.Fatalf("missing %q", want)
 		}
@@ -279,13 +279,40 @@ func TestScopesForManageWithOptions_Readonly(t *testing.T) {
 	}
 }
 
+func TestScopesForManageWithOptions_GmailScopeReadonly(t *testing.T) {
+	scopes, err := ScopesForManageWithOptions([]Service{ServiceGmail, ServiceDrive}, ScopeOptions{
+		GmailScope: GmailScopeReadonly,
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	if !containsScope(scopes, "https://www.googleapis.com/auth/gmail.readonly") {
+		t.Fatalf("missing gmail.readonly in %v", scopes)
+	}
+
+	for _, nw := range []string{
+		"https://www.googleapis.com/auth/gmail.modify",
+		"https://www.googleapis.com/auth/gmail.settings.basic",
+		"https://www.googleapis.com/auth/gmail.settings.sharing",
+	} {
+		if containsScope(scopes, nw) {
+			t.Fatalf("unexpected %q in %v", nw, scopes)
+		}
+	}
+
+	if !containsScope(scopes, "https://www.googleapis.com/auth/drive") {
+		t.Fatalf("missing drive in %v", scopes)
+	}
+}
+
 func TestScopes_ServiceKeep_DefaultIsReadonly(t *testing.T) {
 	scopes, err := Scopes(ServiceKeep)
 	if err != nil {
 		t.Fatalf("Scopes: %v", err)
 	}
 
-	if len(scopes) != 1 || scopes[0] != "https://www.googleapis.com/auth/keep.readonly" {
+	if len(scopes) != 1 || scopes[0] != "https://www.googleapis.com/auth/keep" {
 		t.Fatalf("unexpected keep scopes: %#v", scopes)
 	}
 }
@@ -296,7 +323,7 @@ func TestScopesForServiceWithOptions_ServiceKeep_Readonly(t *testing.T) {
 		t.Fatalf("scopesForServiceWithOptions: %v", err)
 	}
 
-	if len(scopes) != 1 || scopes[0] != "https://www.googleapis.com/auth/keep.readonly" {
+	if len(scopes) != 1 || scopes[0] != "https://www.googleapis.com/auth/keep" {
 		t.Fatalf("unexpected keep readonly scopes: %#v", scopes)
 	}
 }
@@ -467,6 +494,40 @@ func TestScopesForServiceWithOptions_AppScriptReadonly(t *testing.T) {
 
 	if containsScope(scopes, "https://www.googleapis.com/auth/script.projects") {
 		t.Fatalf("unexpected script.projects in %v", scopes)
+	}
+}
+
+func TestScopesForManageWithOptions_ExtraScopes(t *testing.T) {
+	scopes, err := ScopesForManageWithOptions([]Service{ServiceGmail}, ScopeOptions{
+		GmailScope: GmailScopeReadonly,
+		ExtraScopes: []string{
+			"https://www.googleapis.com/auth/gmail.labels",
+			"https://www.googleapis.com/auth/gmail.readonly", // duplicate
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	if !containsScope(scopes, "https://www.googleapis.com/auth/gmail.labels") {
+		t.Fatalf("missing gmail.labels in %v", scopes)
+	}
+
+	if !containsScope(scopes, "https://www.googleapis.com/auth/gmail.readonly") {
+		t.Fatalf("missing gmail.readonly in %v", scopes)
+	}
+
+	// De-duplication: gmail.readonly should appear exactly once
+	count := 0
+
+	for _, s := range scopes {
+		if s == "https://www.googleapis.com/auth/gmail.readonly" {
+			count++
+		}
+	}
+
+	if count != 1 {
+		t.Fatalf("expected gmail.readonly exactly once, got %d in %v", count, scopes)
 	}
 }
 

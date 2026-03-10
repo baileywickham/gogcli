@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/alecthomas/kong"
@@ -24,13 +23,15 @@ import (
 const (
 	colorAuto  = "auto"
 	colorNever = "never"
-	strTrue    = "true"
+	boolTrue   = "true"
+	boolFalse  = "false"
 )
 
 type RootFlags struct {
 	Color          string `help:"Color output: auto|always|never" default:"${color}"`
 	Account        string `help:"Account email for API commands (gmail/calendar/chat/classroom/drive/docs/slides/contacts/tasks/people/sheets/forms/appscript)" aliases:"acct" short:"a"`
 	Client         string `help:"OAuth client name (selects stored credentials + token bucket)" default:"${client}"`
+	AccessToken    string `help:"Use provided access token directly (bypasses stored refresh tokens; token expires in ~1h)" env:"GOG_ACCESS_TOKEN"` //nolint:gosec // CLI/env input, not an embedded secret
 	EnableCommands string `help:"Comma-separated list of enabled top-level commands (restricts CLI)" default:"${enabled_commands}"`
 	JSON           bool   `help:"Output JSON to stdout (best for scripting)" default:"${json}" aliases:"machine" short:"j"`
 	Plain          bool   `help:"Output stable, parseable text to stdout (TSV; no colors)" default:"${plain}" aliases:"tsv" short:"p"`
@@ -62,6 +63,7 @@ type CLI struct {
 
 	Auth       AuthCmd               `cmd:"" help:"Auth and credentials"`
 	Groups     GroupsCmd             `cmd:"" aliases:"group" help:"Google Groups"`
+	Admin      AdminCmd              `cmd:"" help:"Google Workspace Admin (Directory API) - requires domain-wide delegation"`
 	Drive      DriveCmd              `cmd:"" aliases:"drv" help:"Google Drive"`
 	Docs       DocsCmd               `cmd:"" aliases:"doc" help:"Google Docs (export via Drive)"`
 	Slides     SlidesCmd             `cmd:"" aliases:"slide" help:"Google Slides"`
@@ -89,6 +91,9 @@ type CLI struct {
 type exitPanic struct{ code int }
 
 func Execute(args []string) (err error) {
+	if len(args) == 0 {
+		args = []string{"--help"}
+	}
 	args = rewriteDesirePathArgs(args)
 
 	parser, cli, err := newParser(helpDescription())
@@ -132,7 +137,7 @@ func Execute(args []string) (err error) {
 
 	// Opt-in "agent mode": default to JSON when stdout is piped/non-TTY.
 	// We intentionally do this after parsing so `--plain` can override it.
-	if envBool("GOG_AUTO_JSON") && !cli.JSON && !cli.Plain && !term.IsTerminal(int(os.Stdout.Fd())) {
+	if envBool("GOG_AUTO_JSON") && !cli.JSON && !cli.Plain && !term.IsTerminal(int(os.Stdout.Fd())) { //nolint:gosec // os file descriptor fits int on supported targets
 		cli.JSON = true
 	}
 
@@ -148,6 +153,7 @@ func Execute(args []string) (err error) {
 		Select:      splitCommaList(cli.Select),
 	})
 	ctx = authclient.WithClient(ctx, cli.Client)
+	ctx = authclient.WithAccessToken(ctx, directAccessToken(&cli.RootFlags))
 
 	uiColor := cli.Color
 	if outfmt.IsJSON(ctx) || outfmt.IsPlain(ctx) {
@@ -282,7 +288,7 @@ func envOr(key, fallback string) string {
 func envBool(key string) bool {
 	v := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
 	switch v {
-	case "1", strTrue, "yes", "y", "on":
+	case "1", boolTrue, "yes", "y", "on":
 		return true
 	default:
 		return false
@@ -290,7 +296,10 @@ func envBool(key string) bool {
 }
 
 func boolString(v bool) string {
-	return strconv.FormatBool(v)
+	if v {
+		return boolTrue
+	}
+	return boolFalse
 }
 
 func newParser(description string) (*kong.Kong, *CLI, error) {

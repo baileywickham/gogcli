@@ -30,6 +30,7 @@ type gmailWatchServer struct {
 	store           *gmailWatchStore
 	validator       *idtoken.Validator
 	newService      func(context.Context, string) (*gmail.Service, error)
+	sleep           func(context.Context, time.Duration) error
 	hookClient      *http.Client
 	excludeLabelIDs map[string]struct{}
 	logf            func(string, ...any)
@@ -172,6 +173,11 @@ func (s *gmailWatchServer) handlePush(ctx context.Context, payload gmailPushPayl
 		return nil, errNoNewMessages
 	}
 
+	err = s.sleepForFetch(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	svc, err := s.newService(ctx, s.cfg.Account)
 	if err != nil {
 		return nil, err
@@ -181,8 +187,7 @@ func (s *gmailWatchServer) handlePush(ctx context.Context, payload gmailPushPayl
 	if len(s.cfg.HistoryTypes) > 0 {
 		historyCall.HistoryTypes(s.cfg.HistoryTypes...)
 	}
-
-	historyResp, err := historyCall.Do()
+	historyResp, err := historyCall.Context(ctx).Do()
 	if err != nil {
 		if isStaleHistoryError(err) {
 			return s.resyncHistory(ctx, svc, payload.HistoryID, payload.MessageID)
@@ -267,6 +272,23 @@ func (s *gmailWatchServer) resyncHistory(ctx context.Context, svc *gmail.Service
 	}, nil
 }
 
+func (s *gmailWatchServer) sleepForFetch(ctx context.Context) error {
+	if s.cfg.FetchDelay <= 0 {
+		return nil
+	}
+	if s.sleep != nil {
+		return s.sleep(ctx, s.cfg.FetchDelay)
+	}
+	timer := time.NewTimer(s.cfg.FetchDelay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
 func (s *gmailWatchServer) fetchMessages(ctx context.Context, svc *gmail.Service, ids []string) ([]gmailHookMessage, int, error) {
 	messages := make([]gmailHookMessage, 0, len(ids))
 	excluded := 0
@@ -347,7 +369,7 @@ func (s *gmailWatchServer) sendHook(ctx context.Context, payload *gmailHookPaylo
 	if s.cfg.HookToken != "" {
 		req.Header.Set("Authorization", "Bearer "+s.cfg.HookToken)
 	}
-	resp, err := s.hookClient.Do(req)
+	resp, err := s.hookClient.Do(req) //nolint:gosec // hook URL is explicit user configuration
 	if err != nil {
 		_ = s.store.Update(func(state *gmailWatchState) error {
 			state.LastDeliveryStatus = "error"
