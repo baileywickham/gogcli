@@ -11,6 +11,7 @@ import (
 
 	"github.com/steipete/gogcli/internal/authclient"
 	"github.com/steipete/gogcli/internal/config"
+	"github.com/steipete/gogcli/internal/googleapi"
 	"github.com/steipete/gogcli/internal/googleauth"
 	"github.com/steipete/gogcli/internal/outfmt"
 	"github.com/steipete/gogcli/internal/secrets"
@@ -83,50 +84,64 @@ func (c *AuthStatusCmd) Run(ctx context.Context, flags *RootFlags) error {
 		}
 	}
 
+	tokenEndpointAuthConfigured := strings.TrimSpace(cfg.TokenEndpointAuth) != ""
+
 	if outfmt.IsJSON(ctx) {
-		return outfmt.WriteJSON(ctx, os.Stdout, map[string]any{
+		result := map[string]any{
 			"config": map[string]any{
 				"path":   configPath,
 				"exists": configExists,
 			},
-			"keyring": map[string]any{
+			"token_endpoint": map[string]any{
+				"configured":     tokenEndpointConfigured,
+				"endpoint":       tokenEndpoint,
+				"auth_configured": tokenEndpointAuthConfigured,
+			},
+		}
+		if !tokenEndpointConfigured {
+			result["keyring"] = map[string]any{
 				"backend": backendInfo.Value,
 				"source":  backendInfo.Source,
-			},
-			"token_endpoint": map[string]any{
-				"configured": tokenEndpointConfigured,
-				"endpoint":   tokenEndpoint,
-			},
-			"account": map[string]any{
-				"email":                      account,
-				"client":                     client,
-				"credentials_path":           credentialsPath,
-				"credentials_exists":         credentialsExists,
-				"auth_preferred":             authPreferred,
-				"service_account_configured": serviceAccountConfigured,
-				"service_account_path":       serviceAccountPath,
-			},
-		})
+			}
+		}
+		accountInfo := map[string]any{
+			"email":         account,
+			"auth_preferred": authPreferred,
+		}
+		if !tokenEndpointConfigured {
+			accountInfo["client"] = client
+			accountInfo["credentials_path"] = credentialsPath
+			accountInfo["credentials_exists"] = credentialsExists
+			accountInfo["service_account_configured"] = serviceAccountConfigured
+			accountInfo["service_account_path"] = serviceAccountPath
+		}
+		result["account"] = accountInfo
+		return outfmt.WriteJSON(ctx, os.Stdout, result)
 	}
 	u.Out().Printf("config_path\t%s", configPath)
 	u.Out().Printf("config_exists\t%t", configExists)
-	u.Out().Printf("keyring_backend\t%s", backendInfo.Value)
-	u.Out().Printf("keyring_backend_source\t%s", backendInfo.Source)
 	u.Out().Printf("token_endpoint_configured\t%t", tokenEndpointConfigured)
 	if tokenEndpointConfigured {
 		u.Out().Printf("token_endpoint\t%s", tokenEndpoint)
+		u.Out().Printf("token_endpoint_auth_configured\t%t", tokenEndpointAuthConfigured)
+	}
+	if !tokenEndpointConfigured {
+		u.Out().Printf("keyring_backend\t%s", backendInfo.Value)
+		u.Out().Printf("keyring_backend_source\t%s", backendInfo.Source)
 	}
 	if account != "" {
 		u.Out().Printf("account\t%s", account)
-		u.Out().Printf("client\t%s", client)
-		if credentialsPath != "" {
-			u.Out().Printf("credentials_path\t%s", credentialsPath)
-		}
-		u.Out().Printf("credentials_exists\t%t", credentialsExists)
 		u.Out().Printf("auth_preferred\t%s", authPreferred)
-		u.Out().Printf("service_account_configured\t%t", serviceAccountConfigured)
-		if serviceAccountPath != "" {
-			u.Out().Printf("service_account_path\t%s", serviceAccountPath)
+		if !tokenEndpointConfigured {
+			u.Out().Printf("client\t%s", client)
+			if credentialsPath != "" {
+				u.Out().Printf("credentials_path\t%s", credentialsPath)
+			}
+			u.Out().Printf("credentials_exists\t%t", credentialsExists)
+			u.Out().Printf("service_account_configured\t%t", serviceAccountConfigured)
+			if serviceAccountPath != "" {
+				u.Out().Printf("service_account_path\t%s", serviceAccountPath)
+			}
 		}
 	}
 	return nil
@@ -259,9 +274,12 @@ func (c *AuthListCmd) Run(ctx context.Context, _ *RootFlags) error {
 			}
 			if c.Check {
 				if remoteEndpoint {
-					valid := true
+					err := googleapi.CheckRemoteTokenEndpoint(cfg.TokenEndpoint, cfg.TokenEndpointAuth, e.Email, nil, c.Timeout)
+					valid := err == nil
 					it.Valid = &valid
-					it.Error = "remote endpoint (not checked)"
+					if err != nil {
+						it.Error = err.Error()
+					}
 				} else if e.Token == nil {
 					valid := true
 					it.Valid = &valid
@@ -314,7 +332,13 @@ func (c *AuthListCmd) Run(ctx context.Context, _ *RootFlags) error {
 
 		if c.Check {
 			if remoteEndpoint {
-				u.Out().Printf("%s\t%s\t%s\t%s\t%t\t%s\t%s", e.Email, client, servicesCSV, created, true, "remote endpoint (not checked)", auth)
+				err := googleapi.CheckRemoteTokenEndpoint(cfg.TokenEndpoint, cfg.TokenEndpointAuth, e.Email, nil, c.Timeout)
+				valid := err == nil
+				msg := ""
+				if err != nil {
+					msg = err.Error()
+				}
+				u.Out().Printf("%s\t%s\t%s\t%s\t%t\t%s\t%s", e.Email, client, servicesCSV, created, valid, msg, auth)
 				continue
 			}
 			if e.Token == nil {

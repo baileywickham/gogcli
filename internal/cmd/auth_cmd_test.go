@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
@@ -272,7 +275,7 @@ func TestAuthStatus_JSON_TokenEndpoint(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(cfgPath, []byte(`{ "token_endpoint": "https://token.example.com/token" }`), 0o600); err != nil {
+	if err := os.WriteFile(cfgPath, []byte(`{ "token_endpoint": "https://token.example.com/token", "token_endpoint_auth": "secret" }`), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -286,9 +289,11 @@ func TestAuthStatus_JSON_TokenEndpoint(t *testing.T) {
 
 	var payload struct {
 		TokenEndpoint struct {
-			Configured bool   `json:"configured"`
-			Endpoint   string `json:"endpoint"`
+			Configured     bool   `json:"configured"`
+			Endpoint       string `json:"endpoint"`
+			AuthConfigured bool   `json:"auth_configured"`
 		} `json:"token_endpoint"`
+		Keyring *json.RawMessage `json:"keyring,omitempty"`
 	}
 	if err := json.Unmarshal([]byte(out), &payload); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -298,6 +303,12 @@ func TestAuthStatus_JSON_TokenEndpoint(t *testing.T) {
 	}
 	if payload.TokenEndpoint.Endpoint != "https://token.example.com/token" {
 		t.Fatalf("unexpected token_endpoint: %q", payload.TokenEndpoint.Endpoint)
+	}
+	if !payload.TokenEndpoint.AuthConfigured {
+		t.Fatalf("expected token_endpoint_auth configured")
+	}
+	if payload.Keyring != nil {
+		t.Fatalf("expected keyring omitted when token_endpoint is configured, got: %s", *payload.Keyring)
 	}
 }
 
@@ -353,7 +364,7 @@ func TestAuthStatus_Text_TokenEndpoint(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(cfgPath, []byte(`{ "keyring_backend": "file", "token_endpoint": "https://token.example.com/token" }`), 0o600); err != nil {
+	if err := os.WriteFile(cfgPath, []byte(`{ "keyring_backend": "file", "token_endpoint": "https://token.example.com/token", "token_endpoint_auth": "secret" }`), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -371,9 +382,21 @@ func TestAuthStatus_Text_TokenEndpoint(t *testing.T) {
 	if !strings.Contains(out, "token_endpoint\thttps://token.example.com/token") {
 		t.Fatalf("expected token_endpoint URL, got: %q", out)
 	}
+	if !strings.Contains(out, "token_endpoint_auth_configured\ttrue") {
+		t.Fatalf("expected token_endpoint_auth_configured true, got: %q", out)
+	}
+	if strings.Contains(out, "keyring_backend") {
+		t.Fatalf("expected keyring_backend omitted when token_endpoint is configured, got: %q", out)
+	}
 }
 
 func TestAuthListCheck_RemoteEndpoint_JSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"tok","expiry":"2099-01-01T00:00:00Z"}`))
+	}))
+	defer srv.Close()
+
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg-config"))
@@ -385,7 +408,7 @@ func TestAuthListCheck_RemoteEndpoint_JSON(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(cfgPath, []byte(`{ "token_endpoint": "https://token.example.com/token" }`), 0o600); err != nil {
+	if err := os.WriteFile(cfgPath, []byte(fmt.Sprintf(`{ "token_endpoint": %q }`, srv.URL)), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -435,12 +458,18 @@ func TestAuthListCheck_RemoteEndpoint_JSON(t *testing.T) {
 	if resp.Accounts[0].Valid == nil || !*resp.Accounts[0].Valid {
 		t.Fatalf("expected valid true, got: %#v", resp.Accounts[0])
 	}
-	if resp.Accounts[0].Error != "remote endpoint (not checked)" {
-		t.Fatalf("expected remote endpoint message, got: %q", resp.Accounts[0].Error)
+	if resp.Accounts[0].Error != "" {
+		t.Fatalf("expected no error, got: %q", resp.Accounts[0].Error)
 	}
 }
 
 func TestAuthListCheck_RemoteEndpoint_Text(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"tok","expiry":"2099-01-01T00:00:00Z"}`))
+	}))
+	defer srv.Close()
+
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg-config"))
@@ -452,7 +481,7 @@ func TestAuthListCheck_RemoteEndpoint_Text(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(cfgPath, []byte(`{ "token_endpoint": "https://token.example.com/token" }`), 0o600); err != nil {
+	if err := os.WriteFile(cfgPath, []byte(fmt.Sprintf(`{ "token_endpoint": %q }`, srv.URL)), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -481,8 +510,8 @@ func TestAuthListCheck_RemoteEndpoint_Text(t *testing.T) {
 		})
 	})
 
-	if !strings.Contains(out, "remote endpoint (not checked)") {
-		t.Fatalf("expected 'remote endpoint (not checked)' in output, got: %q", out)
+	if !strings.Contains(out, "true") {
+		t.Fatalf("expected valid true in output, got: %q", out)
 	}
 }
 

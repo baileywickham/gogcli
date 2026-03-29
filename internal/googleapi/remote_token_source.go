@@ -83,3 +83,18 @@ func (r *remoteTokenSource) Token() (*oauth2.Token, error) {
 		Expiry:      tokenResp.Expiry,
 	}, nil
 }
+
+// CheckRemoteTokenEndpoint probes the remote token endpoint by requesting a
+// token for the given email and scopes. It returns nil if the endpoint returns
+// a valid access token.
+func CheckRemoteTokenEndpoint(endpoint, auth, email string, scopes []string, timeout time.Duration) error {
+	src := &remoteTokenSource{
+		endpoint:   endpoint,
+		auth:       auth,
+		email:      email,
+		scopes:     scopes,
+		httpClient: &http.Client{Timeout: timeout},
+	}
+	_, err := src.Token()
+	return err
+}
